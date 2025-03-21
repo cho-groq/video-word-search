@@ -23,7 +23,7 @@ if 'api_key' not in st.session_state:
 # Initialize Groq client only once
 if 'groq' not in st.session_state or st.session_state.groq is None:
     if GROQ_API_KEY:
-        st.session_state.groq = Groq(api_key=GROQ_API_KEY)
+        st.session_state.groq = client
     else:
         st.session_state.groq = None  # Ensure it's explicitly set to None if no key
 
@@ -38,17 +38,23 @@ def transcribe_audio(mp3_filepath):
         st.error("Groq client is not initialized. Please check your API Key.")
         st.stop()
     
-    # Open the file as a file object instead of passing the path
-    with open(mp3_filepath, "rb") as audio_file:
-        transcription = st.session_state.groq.audio.transcriptions.create(
-            file=audio_file,  # Pass the file object, not the path
-            model="whisper-large-v3-turbo",
-            timestamp_granularities=["word"],
-            response_format="verbose_json",
-            language="en",
-            temperature=0.0
-        )
-    return transcription.words
+    # check which models are available
+    # print(st.session_state.groq.models.list())
+    
+    try:
+        with open(mp3_filepath, "rb") as audio_file:
+            transcription = st.session_state.groq.audio.transcriptions.create(
+                file=(mp3_filepath, audio_file.read()),
+                model="whisper-large-v3-turbo",
+                response_format="verbose_json",
+                timestamp_granularities=["word"],
+                language="en"
+            )
+        print(transcription)
+        return transcription.words
+    except Exception as e:
+        st.error(f"Transcription error: {e}")
+        return None
 
 def get_top_words_analysis(top_words):
     """Send top words to Groq for analysis and return the summary"""
@@ -107,23 +113,23 @@ with st.form("groqform"):
 
         st.session_state.groq = Groq(api_key=st.session_state.api_key if st.session_state.api_key else GROQ_API_KEY)
 
-
+    video_path = None
     if uploaded_file:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_video:
             tmp_video.write(uploaded_file.read())
             video_path = tmp_video.name
         
-        side = 80
-        width = 200
-        _, container, _ = st.columns([side, width, side])
-        if video_path:
-            container.video(video_path)
+        # side = 80
+        # width = 200
+        # _, container, _ = st.columns([side, width, side])
+        # if video_path:
+        #     container.video(video_path)
 
        
         mp3_path = video_path.replace(".mp4", ".mp3")
         convert_mp4_to_mp3(video_path, mp3_path)
         
-        st.subheader("Transcription in Progress...")
+        st.write("Transcription in Progress...")
         transcription_data = transcribe_audio(mp3_path)
         
         if transcription_data:
@@ -132,9 +138,10 @@ with st.form("groqform"):
             word_count = defaultdict(int)
 
             for segment in transcription_data:
-                word = segment["word"].lower()
-                start = str(datetime.timedelta(seconds=segment["start"]))
-                word_map[word].append(start)
+                word = segment["word"].lower().replace(".", "").replace("?", "").replace("!", "").replace(",", "")
+                start_seconds = segment["start"]  # Keep as float
+                start_time = str(datetime.timedelta(seconds=start_seconds))  # Convert to HH:MM:SS format
+                word_map[word].append((start_seconds, start_time))  # Store both float and formatted time
                 word_count[word] += 1
             
             # Filter out common stop words and get top 20 words
@@ -161,13 +168,43 @@ with st.form("groqform"):
             st.subheader("Search for a Word")
             search_word = st.text_input("Enter a word to see when it's mentioned", autocomplete=None).lower()
             
-            if search_word:
-                occurrences = word_map.get(search_word, [])
-                if occurrences:
-                    st.success(f"**'{search_word}'** appears **{len(occurrences)}** times at:")
-                    for timestamp in occurrences:
-                        st.write(f"🕒 {timestamp}")
-                else:
+            # Display video
+            st.video(video_path)
+            
+            # Search functionality with clickable timestamps
+            occurrences = word_map.get(search_word, [])
+            if occurrences:
+                st.success(f"**'{search_word}'** appears **{len(occurrences)}** times at:")
+                count = 1
+                for start_seconds, timestamp in occurrences:
+                    st.components.v1.html(
+                        f"""
+                        <script>
+                            function seekVideo_{int(start_seconds*1000)}() {{
+                                var video = parent.document.querySelector('video');
+                                if (video) {{
+                                    video.currentTime = {start_seconds};
+                                    video.play();
+                                }}
+                            }}
+                        </script>
+
+                        <div style="display: flex; align-items: center;">
+                            <span style="font-size:18px; font-weight:bold; margin-right: 10px;">{count}.</span>
+                            <button onclick="seekVideo_{int(start_seconds*1000)}()" 
+                                style="padding:8px 12px; background-color:#007bff; color:white; border:none; 
+                                border-radius:5px; cursor:pointer; transition: background-color 0.3s;"
+                                onmouseover="this.style.backgroundColor='#0056b3'" 
+                                onmouseout="this.style.backgroundColor='#007bff'">
+                                🕒 {timestamp}
+                            </button>
+                        </div>
+                        """,
+                        height=55,
+                    )
+                    count += 1
+            else:
+                if search_word != "" and len(search_word) > 0:
                     st.warning(f"'{search_word}' not found in the transcript.")
 
             st.subheader("Frequency of All Words")
