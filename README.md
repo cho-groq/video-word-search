@@ -1,5 +1,10 @@
 # video-word-search
+
+https://github.com/user-attachments/assets/b9cb07aa-e82a-474f-bdba-03ae92be9f22
+
+
 This Streamlit application lets users upload a video file and get timestamps for each word spoken (with the ability to jump to each timestamp by clicking on it), the frequency of each word used, as well as analysis based on the top 20 words used.
+
 
 
 ## Part 1: Imports and Initial Setup
